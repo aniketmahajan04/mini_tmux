@@ -99,7 +99,7 @@ function renderer(terminalState: GlobalState) {
 
   // 2. Print history lines (Limit them so they don't overflow into our status bar)
   // Max lines = total screen space minus the active prompt line and minus the status bar line
-  const maxTerminalHistory = totalRows - 2;
+  const maxTerminalHistory = totalRows - 4;
   const linesToPrint = terminalState.terminalHistory.slice(-maxTerminalHistory);
 
   process.stdout.write("--- MINI TMUX ---\n");
@@ -127,7 +127,7 @@ function renderer(terminalState: GlobalState) {
 
   // MOVE CURSOR BACK TO TYPING POSITION
   // Compute exactly where the user was typing so the flashing cursor jumps back up seamlessly
-  const currentPromptedRow = linesToPrint.length + 3;
+  const currentPromptedRow = 1 + 2 + linesToPrint.length;
   const currentPromptedCol = terminalState.inputBuffer.length + 1;
 
   process.stdout.write(`\x1B[${currentPromptedRow};${currentPromptedCol}H`);
@@ -144,7 +144,7 @@ function main() {
   renderer(state);
 
   // Re-render if user resizes their terminal window to keep the status bar locked to bottom
-  process.stdin.on("resize", () => {
+  process.stdout.on("resize", () => {
     renderer(state);
   });
 
