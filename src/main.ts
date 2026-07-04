@@ -1,31 +1,58 @@
 import process from "node:process";
 
-interface GlobalState {
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface Pane {
+  id: number;
+  rect: Rect;
   cursor: {
     x: number;
     y: number;
   };
   inputBuffer: string;
-  terminalHistory: string[];
+  history: string[];
+}
+
+interface GlobalState {
+  // cursor: {
+  //   x: number;
+  //   y: number;
+  // };
+  // inputBuffer: string;
+  // terminalHistory: string[];
+  panes: Pane[];
+  activePanes: number;
   isRawMode: boolean;
 }
 const state: GlobalState = {
-  cursor: {
-    x: 1,
-    y: 3,
-  },
-  inputBuffer: "",
-  terminalHistory: [],
+  panes: [
+    {
+      id: 0,
+      rect: {
+        x: 0,
+        y: 0,
+        width: process.stdout.rows || 90,
+        height: process.stdout.columns || 24,
+      },
+      cursor: {
+        x: 1,
+        y: 1,
+      },
+      inputBuffer: "",
+      history: [],
+    },
+  ],
+  activePanes: 0,
   isRawMode: true,
 };
 
-function moveTerminalCursor(row: number, col: number) {
-  // \x1B[ is the Control Sequence Introducer (CSI)
-  // \x1B[${row};${col}H moves the cursor to absolute position
-  process.stdout.write(`\x1B[${row};${col}H`);
-}
-
 function keyHandler(key: string, state: GlobalState) {
+  const pane = state.panes[state.activePanes]!;
   if (key === `q` || key === "\u0003") {
     // \u0003 is hex value for Ctrl+c
     console.log("Exiting raw mode");
@@ -36,29 +63,30 @@ function keyHandler(key: string, state: GlobalState) {
 
   // This handle Enter key to execute commands
   if (key === "\r" || key === "\n") {
-    const command = state.inputBuffer.trim().toLowerCase();
+    const command = pane?.inputBuffer.trim().toLowerCase();
 
-    state.terminalHistory.push(`${state.inputBuffer}`);
+    pane?.history.push(`${pane.inputBuffer}`);
     if (command === "clear") {
-      state.terminalHistory = [];
-      state.cursor.x = 1;
-      state.cursor.y = 3;
+      pane.history = [];
+      pane.cursor.x = 1;
+      pane.cursor.y = 1;
     } else if (command !== "") {
-      state.terminalHistory.push(`Undefind command!: "${command}"`);
+      pane.history.push(`Undefind command!: "${command}"`);
+      pane.cursor.y = pane.cursor.y += 1;
     }
-    state.inputBuffer = "";
-    state.cursor.y = state.cursor.y + 1;
-    state.cursor.x = 1;
+    pane.inputBuffer = "";
+    pane.cursor.y = pane.cursor.y += 1;
+    pane.cursor.x = 1;
     return;
   }
 
   // This handles the backspace to modify the inputBuffer written
   if (key === "\x7F" || key === "\b") {
-    if (state.inputBuffer.length > 0) {
-      state.inputBuffer = state.inputBuffer.slice(0, -1);
+    if (pane.inputBuffer.length > 0) {
+      pane.inputBuffer = pane.inputBuffer.slice(0, -1);
 
       // process.stdin.write("\b \b");
-      state.cursor.x = Math.max(1, state.cursor.x - 1);
+      pane.cursor.x = Math.max(1, pane.cursor.x - 1);
     }
     return;
   }
@@ -70,67 +98,86 @@ function keyHandler(key: string, state: GlobalState) {
   // Right: \x1b[C
   // Left: \x1b[D
   if (
-    ["\x1B[A", "\x1B[B", "\x1B[C", "\x1B[D"].includes(key) &&
-    state.inputBuffer.length === 0
+    ["\x1B[A", "\x1B[B", "\x1B[C", "\x1B[D"].includes(key)
+    // state.inputBuffer.length === 0
   ) {
-    if (key === "\x1B[A") state.cursor.y = Math.max(3, state.cursor.y - 1);
-    if (key === "\x1B[B") state.cursor.y++;
-    if (key === "\x1B[C") state.cursor.x++;
-    if (key === "\x1B[D") state.cursor.x = Math.max(1, state.cursor.x - 1);
+    // if (key === "\x1B[A") pane.cursor.y = Math.max(1, pane.cursor.y - 1);
+    // if (key === "\x1B[B") pane.cursor.y++;
+    if (key === "\x1B[C")
+      pane.cursor.x = Math.min(pane.inputBuffer.length + 1, pane.cursor.x + 1);
+    if (key === "\x1B[D") pane.cursor.x = Math.max(1, pane.cursor.x - 1);
 
-    moveTerminalCursor(state.cursor.y, state.cursor.x);
+    // moveTerminalCursor(state.cursor.y, state.cursor.x);
 
     return;
   }
 
   // This will avoid escape codes and arrow key to print and only accept standard printable characters
   if (key.length === 1 && key.charCodeAt(0) >= 32 && key.charCodeAt(0) <= 162) {
-    state.inputBuffer += key;
-    state.cursor.x++;
+    pane.inputBuffer += key;
+    pane.cursor.x++;
   }
 }
 
-function renderer(terminalState: GlobalState) {
-  const totalRows = process.stdout.rows || 24;
-  const totalCols = process.stdout.columns || 80;
+function drawPane(pane: Pane) {
+  const maxTerminalHistory = pane.rect.height - 2;
+  const linesToPrint = pane.history.slice(-maxTerminalHistory);
 
-  // Clear screen and draw static instructions
-  process.stdout.write("\x1B[2J\x1B[H");
-
-  // 2. Print history lines (Limit them so they don't overflow into our status bar)
-  // Max lines = total screen space minus the active prompt line and minus the status bar line
-  const maxTerminalHistory = totalRows - 4;
-  const linesToPrint = terminalState.terminalHistory.slice(-maxTerminalHistory);
-
-  process.stdout.write("--- MINI TMUX ---\n");
-  process.stdout.write(
-    "Type 'clear' to clear the screen. Use Arrow keys to move.\n",
-  );
+  // process.stdout.write("--- MINI TMUX ---\n");
+  // process.stdout.write(
+  //   "Type 'clear' to clear the screen. Use Arrow keys to move.\n",
+  // );
 
   for (const line of linesToPrint) {
     process.stdout.write(line + "\n");
   }
-  process.stdout.write(`${terminalState.inputBuffer}`);
+  process.stdout.write(`${pane.inputBuffer}`);
+}
+
+function drawStatusBar(state: GlobalState) {
+  const rows = process.stdout.rows || 24;
+  const columns = process.stdout.columns || 90;
+  const pane = state.panes[state.activePanes]!;
 
   const greenBg = "\x1B[42m\x1B[30m";
   const resetStyles = "\x1B[0m";
 
   // Construct a status string padded to fill the entire width of the terminal window
-  const statusText = ` [0] mini-tmux * |  State: Raw Mode  |  Buffer: ${terminalState.inputBuffer.length} chars`;
-  const paddedStatus = statusText.padEnd(totalCols, " ");
+  const statusText = ` [${pane.id}] mini-tmux * |  Buffer: ${pane.inputBuffer.length}`;
+  const paddedStatus = statusText.padEnd(columns, " ");
 
   // Move absolute cursor to the very last line, column 1
-  process.stdout.write(`\x1B[${totalRows};1H`);
+  process.stdout.write(`\x1B[${rows};1H`);
 
   // Write styled bar
   process.stdout.write(`${greenBg}${paddedStatus}${resetStyles}`);
+}
+
+function placeCursor(state: GlobalState) {
+  const pane = state.panes[state.activePanes]!;
+
+  const row = pane.rect.y + pane.cursor.y;
+  const col = pane.rect.x + pane.cursor.x;
+  process.stdout.write(`\x1B[${row};${col}H`);
+}
+
+function renderer(state: GlobalState) {
+  // Clear screen and draw static instructions
+  process.stdout.write("\x1B[2J\x1B[H");
+
+  for (const pane of state.panes) {
+    drawPane(pane);
+  }
+
+  drawStatusBar(state);
+  placeCursor(state);
 
   // MOVE CURSOR BACK TO TYPING POSITION
   // Compute exactly where the user was typing so the flashing cursor jumps back up seamlessly
-  const currentPromptedRow = 1 + 2 + linesToPrint.length;
-  const currentPromptedCol = terminalState.inputBuffer.length + 1;
-
-  process.stdout.write(`\x1B[${currentPromptedRow};${currentPromptedCol}H`);
+  // const currentPromptedRow = 1 + linesToPrint.length;
+  // const currentPromptedCol = terminalState.cursor.x;
+  //
+  // process.stdout.write(`\x1B[${currentPromptedRow};${currentPromptedCol}H`);
 }
 function main() {
   // This will check if stdin is actual terminal (TTY)
