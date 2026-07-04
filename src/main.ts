@@ -43,7 +43,7 @@ const state: GlobalState = {
         height: rows - 1,
       },
       cursor: {
-        x: 1,
+        x: 2,
         // y: 1,
       },
       inputBuffer: "",
@@ -86,7 +86,7 @@ function keyHandler(key: string, state: GlobalState) {
     pane?.history.push(`${pane.inputBuffer}`);
     if (command === "clear") {
       pane.history = [];
-      pane.cursor.x = 1;
+      pane.cursor.x = 2;
       // pane.cursor.y = 1;
     } else if (command !== "") {
       pane.history.push(`Undefind command!: "${command}"`);
@@ -94,7 +94,7 @@ function keyHandler(key: string, state: GlobalState) {
     }
     pane.inputBuffer = "";
     // pane.cursor.y = pane.cursor.y += 1;
-    pane.cursor.x = 1;
+    pane.cursor.x = 2;
     return;
   }
 
@@ -104,7 +104,7 @@ function keyHandler(key: string, state: GlobalState) {
       pane.inputBuffer = pane.inputBuffer.slice(0, -1);
 
       // process.stdin.write("\b \b");
-      pane.cursor.x = Math.max(1, pane.cursor.x - 1);
+      pane.cursor.x = Math.max(2, pane.cursor.x - 1);
     }
     return;
   }
@@ -123,7 +123,7 @@ function keyHandler(key: string, state: GlobalState) {
     // if (key === "\x1B[B") pane.cursor.y++;
     if (key === "\x1B[C")
       pane.cursor.x = Math.min(pane.inputBuffer.length + 1, pane.cursor.x + 1);
-    if (key === "\x1B[D") pane.cursor.x = Math.max(1, pane.cursor.x - 1);
+    if (key === "\x1B[D") pane.cursor.x = Math.max(2, pane.cursor.x - 1);
 
     // moveTerminalCursor(state.cursor.y, state.cursor.x);
 
@@ -145,30 +145,43 @@ function drawAt(x: number, y: number, text: string) {
 function drawBorder(rect: Rect) {
   drawAt(rect.x, rect.y, "┌");
   drawAt(rect.x + rect.width - 1, rect.y, "┐");
+
+  drawAt(rect.x, rect.y + rect.height - 1, "└");
+  drawAt(rect.x + rect.width - 1, rect.y + rect.height - 1, "┘");
+
+  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
+    drawAt(x, rect.y, "─");
+  }
+
+  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
+    drawAt(x, rect.y + rect.height - 1, "─");
+  }
+
+  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
+    drawAt(rect.x, y, "│");
+  }
+  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
+    drawAt(rect.x + rect.width - 1, y, "│");
+  }
 }
 
 function drawPane(pane: Pane) {
   drawBorder(pane.rect);
-  // const maxTerminalHistory = pane.rect.height - 2;
-  // const linesToPrint = pane.history.slice(-maxTerminalHistory);
+  const maxTerminalHistory = pane.rect.height - 2;
+  const linesToPrint = pane.history.slice(-maxTerminalHistory);
 
-  // process.stdout.write("--- MINI TMUX ---\n");
-  // process.stdout.write(
-  //   "Type 'clear' to clear the screen. Use Arrow keys to move.\n",
-  // );
+  for (let i = 0; i < linesToPrint.length; i++) {
+    const row = pane.rect.y + i + 2;
+    const col = pane.rect.x + 2;
+    process.stdout.write(`\x1B[${row};${col}H`);
+    process.stdout.write(`${linesToPrint[i]}`);
+  }
+  // Draw current input on the next line
+  const inputRow = pane.rect.y + linesToPrint.length + 2;
+  const inputCol = pane.rect.x + 2;
 
-  // for (let i = 0; i < linesToPrint.length; i++) {
-  //   const row = pane.rect.y + i + 1;
-  //   const col = pane.rect.x + 1;
-  //   process.stdout.write(`\x1B[${row};${col}H`);
-  //   process.stdout.write(`${linesToPrint[i]}`);
-  // }
-  // // Draw current input on the next line
-  // const inputRow = pane.rect.y + linesToPrint.length + 1;
-  // const inputCol = pane.rect.x + 1;
-  //
-  // process.stdout.write(`\x1B[${inputRow};${inputCol}H`);
-  // process.stdout.write(`${pane.inputBuffer}`);
+  process.stdout.write(`\x1B[${inputRow};${inputCol}H`);
+  process.stdout.write(`${pane.inputBuffer}`);
 }
 
 function drawStatusBar(state: GlobalState) {
@@ -194,7 +207,7 @@ function placeCursor(state: GlobalState) {
   const pane = state.panes[state.activePanes]!;
 
   const row =
-    pane.rect.y + pane.history.slice(-(pane.rect.height - 2)).length + 1;
+    pane.rect.y + pane.history.slice(-(pane.rect.height - 2)).length + 2;
   const col = pane.rect.x + pane.cursor.x;
   process.stdout.write(`\x1B[${row};${col}H`);
 }
@@ -209,13 +222,6 @@ function renderer(state: GlobalState) {
 
   drawStatusBar(state);
   placeCursor(state);
-
-  // MOVE CURSOR BACK TO TYPING POSITION
-  // Compute exactly where the user was typing so the flashing cursor jumps back up seamlessly
-  // const currentPromptedRow = 1 + linesToPrint.length;
-  // const currentPromptedCol = terminalState.cursor.x;
-  //
-  // process.stdout.write(`\x1B[${currentPromptedRow};${currentPromptedCol}H`);
 }
 function main() {
   // This will check if stdin is actual terminal (TTY)
