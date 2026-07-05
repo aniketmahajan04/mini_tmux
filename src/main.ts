@@ -3,6 +3,10 @@ import process from "node:process";
 const rows = process.stdout.rows || 24;
 const cols = process.stdout.columns || 90;
 
+interface Cell {
+  char: string;
+}
+
 interface Rect {
   x: number;
   y: number;
@@ -68,6 +72,28 @@ const state: GlobalState = {
   activePanes: 0,
   isRawMode: true,
 };
+
+class Screen {
+  width: number;
+  height: number;
+  cell: Cell[][];
+
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+    this.cell = [];
+
+    for (let y = 0; y < height; y++) {
+      const row: Cell[] = [];
+
+      for (let x = 0; x < width; x++) {
+        row.push({ char: " " });
+      }
+
+      this.cell.push(row);
+    }
+  }
+}
 
 function keyHandler(key: string, state: GlobalState) {
   const pane = state.panes[state.activePanes]!;
@@ -137,44 +163,53 @@ function keyHandler(key: string, state: GlobalState) {
   }
 }
 
-function drawAt(x: number, y: number, text: string) {
-  process.stdout.write(`\x1B[${y + 1};${x + 1}H`);
-  process.stdout.write(text);
+function drawAt(screen: Screen, x: number, y: number, char: string) {
+  // process.stdout.write(`\x1B[${y + 1};${x + 1}H`);
+  // process.stdout.write(text);
+  if (x < 0 || x >= screen.width || y < 0 || y >= screen.height) return;
+  screen.cell[y]![x]!.char = char;
 }
 
-function drawBorder(rect: Rect) {
-  drawAt(rect.x, rect.y, "┌");
-  drawAt(rect.x + rect.width - 1, rect.y, "┐");
-
-  drawAt(rect.x, rect.y + rect.height - 1, "└");
-  drawAt(rect.x + rect.width - 1, rect.y + rect.height - 1, "┘");
-
-  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
-    drawAt(x, rect.y, "─");
-  }
-
-  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
-    drawAt(x, rect.y + rect.height - 1, "─");
-  }
-
-  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
-    drawAt(rect.x, y, "│");
-  }
-  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
-    drawAt(rect.x + rect.width - 1, y, "│");
+function drawText(screen: Screen, x: number, y: number, text: string) {
+  for (let i = 0; i < text.length; i++) {
+    drawAt(screen, x + i, y, text[i]!);
   }
 }
 
-function drawPane(pane: Pane) {
-  drawBorder(pane.rect);
+function drawBorder(screen: Screen, rect: Rect) {
+  drawAt(screen, rect.x, rect.y, "┌");
+  drawAt(screen, rect.x + rect.width - 1, rect.y, "┐");
+
+  drawAt(screen, rect.x, rect.y + rect.height - 1, "└");
+  drawAt(screen, rect.x + rect.width - 1, rect.y + rect.height - 1, "┘");
+
+  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
+    drawAt(screen, x, rect.y, "─");
+  }
+
+  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
+    drawAt(screen, x, rect.y + rect.height - 1, "─");
+  }
+
+  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
+    drawAt(screen, rect.x, y, "│");
+  }
+  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
+    drawAt(screen, rect.x + rect.width - 1, y, "│");
+  }
+}
+
+function drawPane(screen: Screen, pane: Pane) {
+  drawBorder(screen, pane.rect);
   const maxTerminalHistory = pane.rect.height - 2;
   const linesToPrint = pane.history.slice(-maxTerminalHistory);
 
   for (let i = 0; i < linesToPrint.length; i++) {
     const row = pane.rect.y + i + 2;
     const col = pane.rect.x + 2;
-    process.stdout.write(`\x1B[${row};${col}H`);
-    process.stdout.write(`${linesToPrint[i]}`);
+    // process.stdout.write(`\x1B[${row};${col}H`);
+    // process.stdout.write(`${linesToPrint[i]}`);
+    drawText(screen, col, row, linesToPrint[i]!);
   }
   // Draw current input on the next line
   const inputRow = pane.rect.y + linesToPrint.length + 2;
@@ -212,13 +247,31 @@ function placeCursor(state: GlobalState) {
   process.stdout.write(`\x1B[${row};${col}H`);
 }
 
-function renderer(state: GlobalState) {
-  // Clear screen and draw static instructions
+function flush(screen: Screen) {
   process.stdout.write("\x1B[2J\x1B[H");
+  for (let y = 0; y < screen.height; y++) {
+    let line = "";
+    for (let x = 0; x < screen.width; x++) {
+      line += screen.cell[y]![x]!.char;
+    }
+
+    process.stdout.write(line);
+
+    if (y < screen.height - 1) {
+      process.stdout.write("\n");
+    }
+  }
+}
+
+function renderer(state: GlobalState) {
+  const screen = new Screen(cols, rows);
+  // Clear screen and draw static instructions
 
   for (const pane of state.panes) {
-    drawPane(pane);
+    drawPane(screen, pane);
   }
+
+  flush(screen);
 
   drawStatusBar(state);
   placeCursor(state);
