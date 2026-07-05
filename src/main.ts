@@ -3,8 +3,10 @@ import process from "node:process";
 const rows = process.stdout.rows || 24;
 const cols = process.stdout.columns || 90;
 
-interface Cell {
+interface ScreenCell {
   char: string;
+  fg?: number;
+  bg?: number;
 }
 
 interface Rect {
@@ -76,7 +78,7 @@ const state: GlobalState = {
 class Screen {
   width: number;
   height: number;
-  cell: Cell[][];
+  cell: ScreenCell[][];
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -84,7 +86,7 @@ class Screen {
     this.cell = [];
 
     for (let y = 0; y < height; y++) {
-      const row: Cell[] = [];
+      const row: ScreenCell[] = [];
 
       for (let x = 0; x < width; x++) {
         row.push({ char: " " });
@@ -94,7 +96,7 @@ class Screen {
     }
   }
 }
-
+let previousScreen: Screen | null = null;
 function keyHandler(key: string, state: GlobalState) {
   const pane = state.panes[state.activePanes]!;
   if (key === `q` || key === "\u0003") {
@@ -163,16 +165,34 @@ function keyHandler(key: string, state: GlobalState) {
   }
 }
 
-function drawAt(screen: Screen, x: number, y: number, char: string) {
+function drawAt(
+  screen: Screen,
+  x: number,
+  y: number,
+  char: string,
+  fg?: number,
+  bg?: number,
+) {
   // process.stdout.write(`\x1B[${y + 1};${x + 1}H`);
   // process.stdout.write(text);
   if (x < 0 || x >= screen.width || y < 0 || y >= screen.height) return;
-  screen.cell[y]![x]!.char = char;
+  screen.cell[y][x] = {
+    char,
+    fg,
+    bg,
+  };
 }
 
-function drawText(screen: Screen, x: number, y: number, text: string) {
+function drawText(
+  screen: Screen,
+  x: number,
+  y: number,
+  text: string,
+  fg?: number,
+  bg?: number,
+) {
   for (let i = 0; i < text.length; i++) {
-    drawAt(screen, x + i, y, text[i]!);
+    drawAt(screen, x + i, y, text[i]!, fg, bg);
   }
 }
 
@@ -205,21 +225,22 @@ function drawPane(screen: Screen, pane: Pane) {
   const linesToPrint = pane.history.slice(-maxTerminalHistory);
 
   for (let i = 0; i < linesToPrint.length; i++) {
-    const row = pane.rect.y + i + 2;
-    const col = pane.rect.x + 2;
+    const row = pane.rect.y + i + 1;
+    const col = pane.rect.x + 1;
     // process.stdout.write(`\x1B[${row};${col}H`);
     // process.stdout.write(`${linesToPrint[i]}`);
     drawText(screen, col, row, linesToPrint[i]!);
   }
   // Draw current input on the next line
-  const inputRow = pane.rect.y + linesToPrint.length + 2;
-  const inputCol = pane.rect.x + 2;
+  const inputRow = pane.rect.y + linesToPrint.length + 1;
+  const inputCol = pane.rect.x + 1;
 
-  process.stdout.write(`\x1B[${inputRow};${inputCol}H`);
-  process.stdout.write(`${pane.inputBuffer}`);
+  // process.stdout.write(`\x1B[${inputRow};${inputCol}H`);
+  // process.stdout.write(`${pane.inputBuffer}`);
+  drawText(screen, inputCol, inputRow, pane.inputBuffer);
 }
 
-function drawStatusBar(state: GlobalState) {
+function drawStatusBar(screen: Screen, state: GlobalState) {
   const rows = process.stdout.rows || 24;
   const columns = process.stdout.columns || 90;
   const pane = state.panes[state.activePanes]!;
@@ -232,10 +253,11 @@ function drawStatusBar(state: GlobalState) {
   const paddedStatus = statusText.padEnd(columns, " ");
 
   // Move absolute cursor to the very last line, column 1
-  process.stdout.write(`\x1B[${rows};1H`);
+  // process.stdout.write(`\x1B[${rows};1H`);
 
   // Write styled bar
-  process.stdout.write(`${greenBg}${paddedStatus}${resetStyles}`);
+  // process.stdout.write(`${greenBg}${paddedStatus}${resetStyles}`);
+  drawText(screen, 0, rows - 1, paddedStatus, 30, 42);
 }
 
 function placeCursor(state: GlobalState) {
@@ -248,19 +270,35 @@ function placeCursor(state: GlobalState) {
 }
 
 function flush(screen: Screen) {
-  process.stdout.write("\x1B[2J\x1B[H");
-  for (let y = 0; y < screen.height; y++) {
-    let line = "";
-    for (let x = 0; x < screen.width; x++) {
-      line += screen.cell[y]![x]!.char;
-    }
+  if (previousScreen === null) {
+    process.stdout.write("\x1B[2J\x1B[H");
+    for (let y = 0; y < screen.height; y++) {
+      // let line = "";
+      for (let x = 0; x < screen.width; x++) {
+        const cell = screen.cell[y]![x]!;
 
-    process.stdout.write(line);
+        if (cell.fg !== undefined) {
+          process.stdout.write(`\x1B[${cell.fg}m`);
+        }
 
-    if (y < screen.height - 1) {
-      process.stdout.write("\n");
+        if (cell.bg !== undefined) {
+          process.stdout.write(`\x1B[${cell.bg}m`);
+        }
+
+        process.stdout.write(cell.char);
+
+        process.stdout.write("\x1B[0m");
+      }
+
+      // process.stdout.write(line);
+      if (y < screen.height - 1) {
+        process.stdout.write("\n");
+      }
     }
+    previousScreen = screen;
+    return;
   }
+  previousScreen = screen;
 }
 
 function renderer(state: GlobalState) {
@@ -271,9 +309,8 @@ function renderer(state: GlobalState) {
     drawPane(screen, pane);
   }
 
+  drawStatusBar(screen, state);
   flush(screen);
-
-  drawStatusBar(state);
   placeCursor(state);
 }
 function main() {
