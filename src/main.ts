@@ -269,35 +269,65 @@ function placeCursor(state: GlobalState) {
   process.stdout.write(`\x1B[${row};${col}H`);
 }
 
+function sameCell(a: ScreenCell, b: ScreenCell) {
+  return a.char === b.char && a.fg === b.fg && a.bg === b.fg;
+}
+
+function moveCursor(x: number, y: number) {
+  process.stdout.write(`\x1B[${y + 1};${x + 1}H`);
+}
+
+function writeCell(cell: ScreenCell) {
+  if (cell.fg !== undefined) process.stdout.write(`\x1B[${cell.fg}m`);
+
+  if (cell.bg !== undefined) process.stdout.write(`\x1B[${cell.bg}m`);
+
+  process.stdout.write(cell.char);
+  process.stdout.write("\x1B[0m");
+}
+
+function drawWholeScreen(screen: Screen) {
+  process.stdout.write("\x1B[2J\x1B[H");
+  for (let y = 0; y < screen.height; y++) {
+    // let line = "";
+    moveCursor(0, y);
+    for (let x = 0; x < screen.width; x++) {
+      const cell = screen.cell[y]![x]!;
+
+      writeCell(cell);
+    }
+
+    // process.stdout.write(line);
+    // if (y < screen.height - 1) {
+    //   process.stdout.write("\n");
+    // }
+    moveCursor(0, y + 1);
+  }
+}
+
+function drawTheDiff(previousScreen: Screen, screen: Screen) {
+  for (let y = 0; y < previousScreen.height; y++) {
+    for (let x = 0; x < previousScreen.width; x++) {
+      const oldCell = previousScreen.cell[y]![x]!;
+      const newCell = screen.cell[y]![x]!;
+      if (sameCell(oldCell, newCell)) {
+        continue;
+      }
+      moveCursor(x, y);
+      writeCell(newCell);
+    }
+  }
+}
+
 function flush(screen: Screen) {
   if (previousScreen === null) {
-    process.stdout.write("\x1B[2J\x1B[H");
-    for (let y = 0; y < screen.height; y++) {
-      // let line = "";
-      for (let x = 0; x < screen.width; x++) {
-        const cell = screen.cell[y]![x]!;
-
-        if (cell.fg !== undefined) {
-          process.stdout.write(`\x1B[${cell.fg}m`);
-        }
-
-        if (cell.bg !== undefined) {
-          process.stdout.write(`\x1B[${cell.bg}m`);
-        }
-
-        process.stdout.write(cell.char);
-
-        process.stdout.write("\x1B[0m");
-      }
-
-      // process.stdout.write(line);
-      if (y < screen.height - 1) {
-        process.stdout.write("\n");
-      }
-    }
-    previousScreen = screen;
-    return;
+    drawWholeScreen(screen);
   }
+
+  if (previousScreen !== null) {
+    drawTheDiff(previousScreen, screen);
+  }
+
   previousScreen = screen;
 }
 
