@@ -1,4 +1,6 @@
 import process from "node:process";
+import os from "node:os";
+import pty from "node-pty";
 
 const rows = process.stdout.rows || 24;
 const cols = process.stdout.columns || 90;
@@ -16,60 +18,72 @@ interface Rect {
   height: number;
 }
 
-interface Pane {
-  id: number;
-  rect: Rect;
-  cursor: {
-    x: number;
-    // y: number;
-  };
-  inputBuffer: string;
-  history: string[];
-}
+const shell = os.platform() === "win32" ? "powershell.exe" : "bash";
 
+class TerminalBuffer {
+  cursorX = 0;
+  cursorY = 0;
+
+  cells: ScreenCell[][];
+
+  write(data: string) {
+    // interpret bytes
+  }
+}
+interface Pane {
+  id: string;
+  rect: Rect;
+  pty: pty.IPty;
+  terminal: TerminalBuffer;
+}
 interface GlobalState {
-  // cursor: {
-  //   x: number;
-  //   y: number;
-  // };
-  // inputBuffer: string;
-  // terminalHistory: string[];
   panes: Pane[];
   activePanes: number;
   isRawMode: boolean;
 }
+
+function createPanes(id: string, rect: Rect): Pane {
+  try {
+    const ptyProcess = pty.spawn(shell, [], {
+      name: "xterm-color",
+      cols: rect.width,
+      rows: rect.height - 1,
+      cwd: process.env.HOME,
+      env: process.env as { [key: string]: string },
+    });
+
+    const newPane: Pane = {
+      id,
+      rect,
+      pty: ptyProcess,
+      // inputBuffer: "",
+      terminal: new TerminalBuffer(),
+    };
+
+    ptyProcess.onData((data: string) => {
+      // const cleanData = data.replace(/\r/g, "");
+      // const chunks = cleanData.split("\n");
+      // for (const chunk of chunks) {
+      //   if (chunk.trim()) newPane.history.push(chunk);
+      // }
+      newPane.terminal.write(data);
+      renderer(state);
+    });
+
+    return newPane;
+  } catch (error: unknown) {
+    console.error("Failed to create pty process, ", error);
+  }
+}
+
 const state: GlobalState = {
   panes: [
-    {
-      id: 0,
-      rect: {
-        x: 0,
-        y: 0,
-        width: Math.floor(cols / 2),
-        height: rows - 1,
-      },
-      cursor: {
-        x: 2,
-        // y: 1,
-      },
-      inputBuffer: "",
-      history: [],
-    },
-    {
-      id: 1,
-      rect: {
-        x: Math.floor(cols / 2),
-        y: 0,
-        width: cols - Math.floor(cols / 2),
-        height: rows - 1,
-      },
-      cursor: {
-        x: 1,
-        // y: 1,
-      },
-      inputBuffer: "",
-      history: [],
-    },
+    createPanes("pane-1", {
+      x: 0,
+      y: 0,
+      width: cols,
+      height: rows - 1,
+    }),
   ],
   activePanes: 0,
   isRawMode: true,
@@ -97,73 +111,71 @@ class Screen {
   }
 }
 let previousScreen: Screen | null = null;
-function keyHandler(key: string, state: GlobalState) {
-  const pane = state.panes[state.activePanes]!;
-  if (key === `q` || key === "\u0003") {
-    // \u0003 is hex value for Ctrl+c
-    console.log("Exiting raw mode");
+// function keyHandler(key: string, state: GlobalState) {
+//   const pane = state.panes[state.activePanes]!;
+//   if (key === `q` || key === "\u0003") {
+//     // \u0003 is hex value for Ctrl+c
+//     console.log("Exiting raw mode");
+//
+//     process.stdin.setRawMode(false);
+//     process.exit(0);
+//   }
 
-    process.stdin.setRawMode(false);
-    process.exit(0);
-  }
+// This handle Enter key to execute commands
+// if (key === "\r" || key === "\n") {
+//   pane?.history.push(`${pane.inputBuffer}`);
+//   if (command === "clear") {
+//     pane.history = [];
+//     pane.cursor.x = 2;
+//     // pane.cursor.y = 1;
+//   } else if (command !== "") {
+//     pane.history.push(`Undefind command!: "${command}"`);
+//     // pane.cursor.y = pane.cursor.y += 1;
+//   }
+//   pane.inputBuffer = "";
+//   // pane.cursor.y = pane.cursor.y += 1;
+//   pane.cursor.x = 2;
+//   return;
+// }
 
-  // This handle Enter key to execute commands
-  if (key === "\r" || key === "\n") {
-    const command = pane?.inputBuffer.trim().toLowerCase();
+// This handles the backspace to modify the inputBuffer written
+// if (key === "\x7F" || key === "\b") {
+//   if (pane.inputBuffer.length > 0) {
+//     pane.inputBuffer = pane.inputBuffer.slice(0, -1);
+//
+//     // process.stdin.write("\b \b");
+//     pane.cursor.x = Math.max(2, pane.cursor.x - 1);
+//   }
+//   return;
+// }
 
-    pane?.history.push(`${pane.inputBuffer}`);
-    if (command === "clear") {
-      pane.history = [];
-      pane.cursor.x = 2;
-      // pane.cursor.y = 1;
-    } else if (command !== "") {
-      pane.history.push(`Undefind command!: "${command}"`);
-      // pane.cursor.y = pane.cursor.y += 1;
-    }
-    pane.inputBuffer = "";
-    // pane.cursor.y = pane.cursor.y += 1;
-    pane.cursor.x = 2;
-    return;
-  }
+// Handling the Arrow keys
+// In raw mode Arrow keys sent as 3-bytes escape sequece
+// Up: \x1b[A
+// Down: \x1b[B
+// Right: \x1b[C
+// Left: \x1b[D
+// if (
+//   ["\x1B[A", "\x1B[B", "\x1B[C", "\x1B[D"].includes(key)
+//   // state.inputBuffer.length === 0
+// ) {
+//   // if (key === "\x1B[A") pane.cursor.y = Math.max(1, pane.cursor.y - 1);
+//   // if (key === "\x1B[B") pane.cursor.y++;
+//   if (key === "\x1B[C")
+//     pane.cursor.x = Math.min(pane.inputBuffer.length + 1, pane.cursor.x + 1);
+//   if (key === "\x1B[D") pane.cursor.x = Math.max(2, pane.cursor.x - 1);
+//
+//   // moveTerminalCursor(state.cursor.y, state.cursor.x);
+//
+//   return;
+// }
 
-  // This handles the backspace to modify the inputBuffer written
-  if (key === "\x7F" || key === "\b") {
-    if (pane.inputBuffer.length > 0) {
-      pane.inputBuffer = pane.inputBuffer.slice(0, -1);
-
-      // process.stdin.write("\b \b");
-      pane.cursor.x = Math.max(2, pane.cursor.x - 1);
-    }
-    return;
-  }
-
-  // Handling the Arrow keys
-  // In raw mode Arrow keys sent as 3-bytes escape sequece
-  // Up: \x1b[A
-  // Down: \x1b[B
-  // Right: \x1b[C
-  // Left: \x1b[D
-  if (
-    ["\x1B[A", "\x1B[B", "\x1B[C", "\x1B[D"].includes(key)
-    // state.inputBuffer.length === 0
-  ) {
-    // if (key === "\x1B[A") pane.cursor.y = Math.max(1, pane.cursor.y - 1);
-    // if (key === "\x1B[B") pane.cursor.y++;
-    if (key === "\x1B[C")
-      pane.cursor.x = Math.min(pane.inputBuffer.length + 1, pane.cursor.x + 1);
-    if (key === "\x1B[D") pane.cursor.x = Math.max(2, pane.cursor.x - 1);
-
-    // moveTerminalCursor(state.cursor.y, state.cursor.x);
-
-    return;
-  }
-
-  // This will avoid escape codes and arrow key to print and only accept standard printable characters
-  if (key.length === 1 && key.charCodeAt(0) >= 32 && key.charCodeAt(0) <= 162) {
-    pane.inputBuffer += key;
-    pane.cursor.x++;
-  }
-}
+// This will avoid escape codes and arrow key to print and only accept standard printable characters
+// if (key.length === 1 && key.charCodeAt(0) >= 32 && key.charCodeAt(0) <= 162) {
+//   pane.inputBuffer += key;
+//   pane.cursor.x++;
+// }
+// }
 
 function drawAt(
   screen: Screen,
@@ -176,7 +188,7 @@ function drawAt(
   // process.stdout.write(`\x1B[${y + 1};${x + 1}H`);
   // process.stdout.write(text);
   if (x < 0 || x >= screen.width || y < 0 || y >= screen.height) return;
-  screen.cell[y][x] = {
+  screen.cell[y]![x]! = {
     char,
     fg,
     bg,
@@ -185,9 +197,9 @@ function drawAt(
 
 function drawText(
   screen: Screen,
+  text: string,
   x: number,
   y: number,
-  text: string,
   fg?: number,
   bg?: number,
 ) {
@@ -197,47 +209,56 @@ function drawText(
 }
 
 function drawBorder(screen: Screen, rect: Rect) {
-  drawAt(screen, rect.x, rect.y, "┌");
-  drawAt(screen, rect.x + rect.width - 1, rect.y, "┐");
+  // drawAt(screen, rect.x, rect.y, "┌");
+  // drawAt(screen, rect.x + rect.width - 1, rect.y, "┐");
 
-  drawAt(screen, rect.x, rect.y + rect.height - 1, "└");
-  drawAt(screen, rect.x + rect.width - 1, rect.y + rect.height - 1, "┘");
+  // drawAt(screen, rect.x, rect.y + rect.height - 1, "└");
+  // drawAt(screen, rect.x + rect.width - 1, rect.y + rect.height - 1, "┘");
 
-  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
-    drawAt(screen, x, rect.y, "─");
-  }
+  // for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
+  //   drawAt(screen, x, rect.y, "─");
+  // }
 
-  for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
-    drawAt(screen, x, rect.y + rect.height - 1, "─");
-  }
+  // for (let x = rect.x + 1; x < rect.x + rect.width - 1; x++) {
+  //   drawAt(screen, x, rect.y + rect.height - 1, "─");
+  // }
 
-  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
-    drawAt(screen, rect.x, y, "│");
+  for (let y = rect.y; y < rect.height; y++) {
+    drawAt(screen, Math.floor(rect.width / 2), y, "│");
   }
-  for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
-    drawAt(screen, rect.x + rect.width - 1, y, "│");
-  }
+  // for (let y = rect.y + 1; y < rect.y + rect.height - 1; y++) {
+  //   drawAt(screen, rect.x + rect.width - 1, y, "│");
+  // }
 }
 
 function drawPane(screen: Screen, pane: Pane) {
   drawBorder(screen, pane.rect);
-  const maxTerminalHistory = pane.rect.height - 2;
-  const linesToPrint = pane.history.slice(-maxTerminalHistory);
+  // const maxTerminalHistory = pane.rect.height - 2;
+  // const linesToPrint = pane.history.slice(-maxTerminalHistory);
 
-  for (let i = 0; i < linesToPrint.length; i++) {
-    const row = pane.rect.y + i + 1;
-    const col = pane.rect.x + 1;
-    // process.stdout.write(`\x1B[${row};${col}H`);
-    // process.stdout.write(`${linesToPrint[i]}`);
-    drawText(screen, col, row, linesToPrint[i]!);
-  }
+  // for (let i = 0; i < linesToPrint.length; i++) {
+  //   const row = pane.rect.y + i + 1;
+  //   const col = pane.rect.x + 1;
+  //   // process.stdout.write(`\x1B[${row};${col}H`);
+  //   // process.stdout.write(`${linesToPrint[i]}`);
+  //   drawText(screen, col, row, linesToPrint[i]!);
+  // }
   // Draw current input on the next line
-  const inputRow = pane.rect.y + linesToPrint.length + 1;
-  const inputCol = pane.rect.x + 1;
+  // const inputRow = pane.rect.y + linesToPrint.length + 1;
+  // const inputCol = pane.rect.x + 1;
 
   // process.stdout.write(`\x1B[${inputRow};${inputCol}H`);
   // process.stdout.write(`${pane.inputBuffer}`);
-  drawText(screen, inputCol, inputRow, pane.inputBuffer);
+  for (let y = 0; y < pane.rect.height; y++) {
+    for (let x = 0; x < pane.rect.width; x++) {
+      const cell = pane.terminal.cells[y]!.[x]!;
+      if (cell) {
+        const globalX = pane.rect.x + x;
+        const globalY = pane.rect.y + y;
+        drawAt(screen, globalX, globalY, cell.char, cell.fg, cell.bg);
+      }
+    }
+  }
 }
 
 function drawStatusBar(screen: Screen, state: GlobalState) {
@@ -245,27 +266,20 @@ function drawStatusBar(screen: Screen, state: GlobalState) {
   const columns = process.stdout.columns || 90;
   const pane = state.panes[state.activePanes]!;
 
-  const greenBg = "\x1B[42m\x1B[30m";
-  const resetStyles = "\x1B[0m";
-
   // Construct a status string padded to fill the entire width of the terminal window
-  const statusText = ` [${pane.id}] mini-tmux * |  Buffer: ${pane.inputBuffer.length}`;
+  const statusText = ` [${pane.id}] mini-tmux * | `;
   const paddedStatus = statusText.padEnd(columns, " ");
-
-  // Move absolute cursor to the very last line, column 1
-  // process.stdout.write(`\x1B[${rows};1H`);
 
   // Write styled bar
   // process.stdout.write(`${greenBg}${paddedStatus}${resetStyles}`);
-  drawText(screen, 0, rows - 1, paddedStatus, 30, 42);
+  drawText(screen, paddedStatus, 0, rows - 1, 30, 42);
 }
 
 function placeCursor(state: GlobalState) {
   const pane = state.panes[state.activePanes]!;
 
-  const row =
-    pane.rect.y + pane.history.slice(-(pane.rect.height - 2)).length + 2;
-  const col = pane.rect.x + pane.cursor.x;
+  const row = pane.rect.y + pane.terminal.cursorY + 1;
+  const col = pane.rect.x + pane.terminal.cursorX;
   process.stdout.write(`\x1B[${row};${col}H`);
 }
 
@@ -287,7 +301,10 @@ function writeCell(cell: ScreenCell) {
 }
 
 function drawWholeScreen(screen: Screen) {
+  // This will clear the screen
   process.stdout.write("\x1B[2J\x1B[H");
+
+  // writing the cell from previousScreen to screen
   for (let y = 0; y < screen.height; y++) {
     // let line = "";
     moveCursor(0, y);
@@ -297,10 +314,6 @@ function drawWholeScreen(screen: Screen) {
       writeCell(cell);
     }
 
-    // process.stdout.write(line);
-    // if (y < screen.height - 1) {
-    //   process.stdout.write("\n");
-    // }
     moveCursor(0, y + 1);
   }
 }
@@ -341,7 +354,7 @@ function renderer(state: GlobalState) {
 
   drawStatusBar(screen, state);
   flush(screen);
-  placeCursor(state);
+  // placeCursor(state);
 }
 function main() {
   // This will check if stdin is actual terminal (TTY)
@@ -360,8 +373,19 @@ function main() {
   });
 
   process.stdin.on("data", (key: string) => {
-    keyHandler(key, state);
-    renderer(state);
+    const pane = state.panes[state.activePanes]!;
+    // keyHandler(key, state);
+    if (pane) {
+      // Exit condition handling hook checks catch
+      if (key === `\u0003`) {
+        // Ctrl+C close mechanism path
+        process.stdout.write("\x1B[2J\x1B[H");
+        console.log("Exiting mini-tmux layout session safely");
+        process.stdin.setRawMode(false);
+        process.exit(0);
+      }
+      pane.pty.write(key);
+    }
   });
 }
 
