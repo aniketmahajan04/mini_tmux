@@ -21,13 +21,106 @@ interface Rect {
 const shell = os.platform() === "win32" ? "powershell.exe" : "bash";
 
 class TerminalBuffer {
+  width: number;
+  height: number;
+
   cursorX = 0;
   cursorY = 0;
 
   cells: ScreenCell[][];
 
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+
+    this.cells = [];
+
+    for (let y = 0; y < height; y++) {
+      const row: ScreenCell[] = [];
+      for (let x = 0; x < width; x++) {
+        row.push({ char: " " });
+      }
+      this.cells.push(row);
+    }
+  }
+
+  private putChar(ch: string) {
+    if (
+      this.cursorX >= 0 &&
+      this.cursorX < this.width &&
+      this.cursorY >= 0 &&
+      this.cursorY < this.height
+    ) {
+      this.cells[this.cursorY]![this.cursorX]! = {
+        char: ch,
+      };
+    }
+    this.cursorX++;
+
+    if (this.cursorX >= this.width) {
+      this.cursorX = 0;
+      this.cursorY++;
+    }
+
+    if (this.cursorY >= this.height) {
+      this.scroll();
+    }
+  }
+
+  private scroll() {
+    this.cells.shift();
+    const row: ScreenCell[] = [];
+    for (let x = 0; x < this.width; x++) {
+      row.push({ char: " " });
+    }
+
+    this.cells.push(row);
+
+    this.cursorY = this.height - 1;
+  }
+
+  private backspace() {
+    if (this.cursorX > 0) {
+      this.cursorX--;
+    }
+
+    this.cells[this.cursorY]![this.cursorX]! = {
+      char: " ",
+    };
+  }
+
+  private newLine() {
+    this.cursorY++;
+    this.cursorX = 0;
+    if (this.cursorY >= this.height) {
+      this.scroll();
+    }
+  }
+
+  private carriageReturn() {
+    this.cursorX = 0;
+  }
+
   write(data: string) {
     // interpret bytes
+    for (const ch of data) {
+      switch (ch) {
+        case "\n":
+          this.newLine();
+          break;
+
+        case "\r":
+          this.carriageReturn();
+          break;
+
+        case "\b":
+          this.backspace();
+          break;
+
+        default:
+          this.putChar(ch);
+      }
+    }
   }
 }
 interface Pane {
@@ -57,7 +150,7 @@ function createPanes(id: string, rect: Rect): Pane {
       rect,
       pty: ptyProcess,
       // inputBuffer: "",
-      terminal: new TerminalBuffer(),
+      terminal: new TerminalBuffer(rect.width, rect.height),
     };
 
     ptyProcess.onData((data: string) => {
@@ -233,25 +326,9 @@ function drawBorder(screen: Screen, rect: Rect) {
 
 function drawPane(screen: Screen, pane: Pane) {
   drawBorder(screen, pane.rect);
-  // const maxTerminalHistory = pane.rect.height - 2;
-  // const linesToPrint = pane.history.slice(-maxTerminalHistory);
-
-  // for (let i = 0; i < linesToPrint.length; i++) {
-  //   const row = pane.rect.y + i + 1;
-  //   const col = pane.rect.x + 1;
-  //   // process.stdout.write(`\x1B[${row};${col}H`);
-  //   // process.stdout.write(`${linesToPrint[i]}`);
-  //   drawText(screen, col, row, linesToPrint[i]!);
-  // }
-  // Draw current input on the next line
-  // const inputRow = pane.rect.y + linesToPrint.length + 1;
-  // const inputCol = pane.rect.x + 1;
-
-  // process.stdout.write(`\x1B[${inputRow};${inputCol}H`);
-  // process.stdout.write(`${pane.inputBuffer}`);
   for (let y = 0; y < pane.rect.height; y++) {
     for (let x = 0; x < pane.rect.width; x++) {
-      const cell = pane.terminal.cells[y]!.[x]!;
+      const cell = pane.terminal.cells[y]![x]!;
       if (cell) {
         const globalX = pane.rect.x + x;
         const globalY = pane.rect.y + y;
@@ -259,6 +336,12 @@ function drawPane(screen: Screen, pane: Pane) {
       }
     }
   }
+  drawAt(
+    screen,
+    pane.rect.x + pane.terminal.cursorX,
+    pane.rect.y + pane.terminal.cursorY,
+    "█",
+  );
 }
 
 function drawStatusBar(screen: Screen, state: GlobalState) {
